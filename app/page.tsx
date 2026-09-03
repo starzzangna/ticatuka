@@ -1,15 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BrainCircuit, RotateCcw, Shield, Sparkles, Volume2, VolumeX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 type Die = { id: number; value: number; shield: boolean };
 type Board = [Die[], Die[], Die[]];
 type Player = 'me' | 'cpu';
-type Phase = 'place' | 'shield' | 'over';
+type Phase = 'place' | 'shield' | 'knock' | 'over';
 type Difficulty = 'beginner' | 'skilled' | 'expert';
 type Profile = { name: string; title: string; image: string; difficulty?: Difficulty; level?: string };
+type KnockFx = { attacker: Player; attackerId: number; victimIds: number[]; row: number };
 
 const PLAYER_PROFILE: Profile = { name: '루미', title: '룬 탐험가', image: '/profiles/lumi.png' };
 const OPPONENTS: Record<Difficulty, Profile> = {
@@ -82,12 +83,12 @@ function cpuUtility(board: { me: Board; cpu: Board }, row: number, value: number
   return comboGain * 2 + hits * 22 + threat * 0.45 + (rowScore(afterRow) > rowScore(board.me[row]) ? 10 : 0);
 }
 
-function DieFace({ die, active = false }: { die: Die; active?: boolean }) {
+function DieFace({ die, active = false, motion = '' }: { die: Die; active?: boolean; motion?: string }) {
   return (
     <div
       role="img"
       aria-label={`${die.shield ? '실드' : '일반'} 주사위 ${die.value}`}
-      className={`die die-${die.value} ${die.shield ? 'shield-die' : ''} ${active ? 'active-die' : ''}`}
+      className={`die die-${die.value} ${die.shield ? 'shield-die' : ''} ${active ? 'active-die' : ''} ${motion}`}
     >
       {Array.from({ length: die.value }).map((_, index) => <span key={index} className="pip" />)}
     </div>
@@ -107,8 +108,11 @@ export default function Home() {
   const [sound, setSound] = useState(true);
   const [gameNo, setGameNo] = useState(1);
   const [difficulty, setDifficulty] = useState<Difficulty>('beginner');
+  const [knockFx, setKnockFx] = useState<KnockFx | null>(null);
+  const animationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { setValue(roll()); }, []);
+  useEffect(() => () => { if (animationTimer.current) clearTimeout(animationTimer.current); }, []);
 
   const scores = useMemo(() => ({ me: boards.me.map(rowScore), cpu: boards.cpu.map(rowScore) }), [boards]);
   const forecasts = useMemo(() => {
@@ -137,30 +141,38 @@ export default function Home() {
   };
 
   const place = (owner: Player, rowIndex: number) => {
-    if (phase === 'over' || turn !== 'me' || choice) return;
+    if (!['place', 'shield'].includes(phase) || turn !== 'me' || choice) return;
     const initial = boards.me.flat().length === 0 && boards.cpu.flat().length === 0;
     if ((owner !== 'me' && !isShield) || (initial && owner !== 'me') || boards[owner][rowIndex].length >= 3) return;
     const next = { me: boards.me.map((row) => [...row]) as Board, cpu: boards.cpu.map((row) => [...row]) as Board };
-    next[owner][rowIndex].push({ id: Date.now() + Math.random(), value, shield: isShield });
-    let knocked = 0;
+    const placed = { id: Date.now() + Math.random(), value, shield: isShield };
+    next[owner][rowIndex].push(placed);
+    let victimIds: number[] = [];
     if (!isShield && owner === 'me') {
-      const before = next.cpu[rowIndex].length;
-      next.cpu[rowIndex] = next.cpu[rowIndex].filter((die) => die.shield || die.value !== value);
-      knocked = before - next.cpu[rowIndex].length;
+      victimIds = next.cpu[rowIndex].filter((die) => !die.shield && die.value === value).map((die) => die.id);
     }
     setBoards(next);
-    if (knocked) {
-      setPhase('shield');
-      setIsShield(true);
-      setValue(roll());
-      setMessage(`알까기 성공! ${knocked}개 제거 · 보너스 실드를 양쪽 보드 중 골라 놓으세요.`);
+    if (victimIds.length) {
+      setPhase('knock');
+      setKnockFx({ attacker: 'me', attackerId: placed.id, victimIds, row: rowIndex });
+      setMessage(`알까기! 내 주사위가 같은 숫자 ${victimIds.length}개를 밀어냅니다.`);
+      animationTimer.current = setTimeout(() => {
+        const cleaned = { me: next.me.map((line) => [...line]) as Board, cpu: next.cpu.map((line) => [...line]) as Board };
+        cleaned.cpu[rowIndex] = cleaned.cpu[rowIndex].filter((die) => !victimIds.includes(die.id));
+        setBoards(cleaned);
+        setKnockFx(null);
+        setPhase('shield');
+        setIsShield(true);
+        setValue(roll());
+        setMessage(`알까기 성공! ${victimIds.length}개 제거 · 보너스 실드를 양쪽 보드 중 골라 놓으세요.`);
+      }, 760);
     } else {
       nextTurn(next, 'me');
     }
   };
 
   useEffect(() => {
-    if (turn !== 'cpu' || phase === 'over') return;
+    if (turn !== 'cpu' || phase !== 'place') return;
     const timer = setTimeout(() => {
       const next = { me: boards.me.map((row) => [...row]) as Board, cpu: boards.cpu.map((row) => [...row]) as Board };
       const openRows = next.cpu.map((row, index) => row.length < 3 ? index : -1).filter((index) => index >= 0);
@@ -184,39 +196,51 @@ export default function Home() {
         })[0];
       } else row = [...openRows].sort((a, b) => cpuUtility(next, b, cpuValue) - cpuUtility(next, a, cpuValue))[0];
 
-      next.cpu[row].push({ id: Date.now(), value: cpuValue, shield: isShield });
-      let knocked = 0;
+      const placed = { id: Date.now(), value: cpuValue, shield: isShield };
+      next.cpu[row].push(placed);
+      let victimIds: number[] = [];
       if (!isShield) {
-        const before = next.me[row].length;
-        next.me[row] = next.me[row].filter((die) => die.shield || die.value !== cpuValue);
-        knocked = before - next.me[row].length;
-      }
-      if (knocked) {
-        const shieldValue = roll();
-        const ownRows = next.cpu.map((line, index) => line.length < 3 ? index : -1).filter((index) => index >= 0);
-        const yourRows = next.me.map((line, index) => line.length < 3 ? index : -1).filter((index) => index >= 0);
-        const target: Player = ownRows.length ? 'cpu' : 'me';
-        const targetRows = target === 'cpu' ? ownRows : yourRows;
-        if (targetRows.length) next[target][targetRows[0]].push({ id: Date.now() + 1, value: shieldValue, shield: true });
-        setMessage(`${OPPONENTS[difficulty].name}가 알까기로 ${knocked}개를 제거하고 실드를 배치했습니다.`);
+        victimIds = next.me[row].filter((die) => !die.shield && die.value === cpuValue).map((die) => die.id);
       }
       setBoards({ me: next.me.map((line) => [...line]) as Board, cpu: next.cpu.map((line) => [...line]) as Board });
+      if (victimIds.length) {
+        setPhase('knock');
+        setKnockFx({ attacker: 'cpu', attackerId: placed.id, victimIds, row });
+        setMessage(`${OPPONENTS[difficulty].name}의 주사위가 알까기를 시도합니다!`);
+        animationTimer.current = setTimeout(() => {
+          const cleaned = { me: next.me.map((line) => [...line]) as Board, cpu: next.cpu.map((line) => [...line]) as Board };
+          cleaned.me[row] = cleaned.me[row].filter((die) => !victimIds.includes(die.id));
+          const shieldValue = roll();
+          const ownRows = cleaned.cpu.map((line, index) => line.length < 3 ? index : -1).filter((index) => index >= 0);
+          const yourRows = cleaned.me.map((line, index) => line.length < 3 ? index : -1).filter((index) => index >= 0);
+          const target: Player = ownRows.length ? 'cpu' : 'me';
+          const targetRows = target === 'cpu' ? ownRows : yourRows;
+          if (targetRows.length) cleaned[target][targetRows[0]].push({ id: Date.now() + 1, value: shieldValue, shield: true });
+          setBoards(cleaned);
+          setKnockFx(null);
+          nextTurn(cleaned, 'cpu');
+        }, 760);
+        return;
+      }
       nextTurn(next, 'cpu');
     }, difficulty === 'beginner' ? 560 : difficulty === 'skilled' ? 760 : 980);
     return () => clearTimeout(timer);
   }, [boards, difficulty, isShield, phase, rerolls.cpu, turn, value]);
 
   const useReroll = () => {
-    if (turn !== 'me' || !rerolls.me || phase === 'over') return;
+    if (turn !== 'me' || !rerolls.me || phase !== 'place') return;
     setRerolls((current) => ({ ...current, me: false }));
     setChoice([value, roll()]);
     setMessage('기존 숫자와 새 숫자 중 하나를 선택하세요.');
   };
 
   const reset = () => {
+    if (animationTimer.current) clearTimeout(animationTimer.current);
+    animationTimer.current = null;
     setBoards({ me: emptyBoard(), cpu: emptyBoard() });
     setTurn('me'); setPhase('place'); setValue(roll()); setIsShield(true);
     setRerolls({ me: true, cpu: true }); setChoice(null);
+    setKnockFx(null);
     setMessage('첫 주사위는 실드입니다. 내 보드에 놓아주세요.');
     setGameNo((number) => number + 1);
   };
@@ -239,7 +263,7 @@ export default function Home() {
   return (
     <main className="game-shell">
       <header className="topbar">
-        <div className="brand"><span className="brand-gem"><Sparkles /></span><div><h1>룬 다이스</h1><p>세 줄의 운명</p></div></div>
+        <div className="brand"><span className="brand-gem"><Sparkles /></span><div><h1>티카투카</h1><p>세 줄의 운명</p></div></div>
         <div className="round-chip">ROUND <strong>{gameNo}</strong></div>
         <nav><Button variant="ghost" size="sm" onClick={() => setRulesOpen(true)}>게임 규칙</Button><Button variant="ghost" size="icon-sm" onClick={() => setSound(!sound)} aria-label="소리 켜기/끄기">{sound ? <Volume2 /> : <VolumeX />}</Button><Button variant="ghost" size="icon-sm" onClick={reset} aria-label="새 게임"><RotateCcw /></Button></nav>
       </header>
@@ -252,9 +276,9 @@ export default function Home() {
       <section className="turn-stage"><span className={`turn-dot ${turn === 'me' ? 'mine' : ''}`} /><div><p>{turn === 'me' ? '당신의 차례' : `${opponent.name}의 차례`}</p><strong>{message}</strong></div><span className={`type-badge ${isShield ? 'shield' : ''}`}>{isShield && <Shield />}{isShield ? '실드 주사위' : '일반 주사위'}</span></section>
 
       <section className="table-wrap">
-        <PlayerBoard profile={PLAYER_PROFILE} label="나" board={boards.me} scores={scores.me} accent="teal" active={turn === 'me'} onRow={(index) => place('me', index)} canPlace={(index) => turn === 'me' && !choice && boards.me[index].length < 3} currentValue={value} forecasts={forecasts} recommendedRow={recommendedRow} />
-        <div className="center-console"><span className="roll-label">이번 주사위</span><DieFace die={{ id: 0, value, shield: isShield }} active />{choice ? <span className="reroll-pending"><RotateCcw /> 선택 대기</span> : <Button className="reroll-btn" variant="outline" onClick={useReroll} disabled={!rerolls.me || turn !== 'me'}><RotateCcw /> 리롤 <small>{rerolls.me ? '1회 남음' : '사용 완료'}</small></Button>}<div className="versus">VS</div></div>
-        <PlayerBoard profile={opponent} label="상대" board={boards.cpu} scores={scores.cpu} accent="coral" active={turn === 'cpu'} onRow={(index) => place('cpu', index)} canPlace={(index) => turn === 'me' && !choice && isShield && boards.cpu[index].length < 3 && !(boards.me.flat().length === 0 && boards.cpu.flat().length === 0)} currentValue={value} />
+        <PlayerBoard owner="me" knockFx={knockFx} profile={PLAYER_PROFILE} label="나" board={boards.me} scores={scores.me} accent="teal" active={turn === 'me'} onRow={(index) => place('me', index)} canPlace={(index) => turn === 'me' && !choice && phase !== 'knock' && boards.me[index].length < 3} currentValue={value} forecasts={forecasts} recommendedRow={recommendedRow} />
+        <div className="center-console"><span className="roll-label">이번 주사위</span><DieFace die={{ id: 0, value, shield: isShield }} active />{choice ? <span className="reroll-pending"><RotateCcw /> 선택 대기</span> : <Button className="reroll-btn" variant="outline" onClick={useReroll} disabled={!rerolls.me || turn !== 'me' || phase !== 'place'}><RotateCcw /> 리롤 <small>{rerolls.me ? '1회 남음' : '사용 완료'}</small></Button>}<div className="versus">VS</div></div>
+        <PlayerBoard owner="cpu" knockFx={knockFx} profile={opponent} label="상대" board={boards.cpu} scores={scores.cpu} accent="coral" active={turn === 'cpu'} onRow={(index) => place('cpu', index)} canPlace={(index) => turn === 'me' && !choice && phase !== 'knock' && isShield && boards.cpu[index].length < 3 && !(boards.me.flat().length === 0 && boards.cpu.flat().length === 0)} currentValue={value} />
       </section>
 
       {difficulty === 'beginner' && forecasts && <aside className="coach-tip"><BrainCircuit /><div><b>루미의 추천</b><span>{recommendedRow >= 0 ? `${recommendedRow + 1}번 줄의 예상 승률이 ${forecasts[recommendedRow]}%로 가장 높아요.` : '놓을 수 있는 줄이 없습니다.'}</span></div><small>남은 일반 주사위 조합과 현재 알까기 결과를 반영한 추정치</small></aside>}
@@ -267,6 +291,12 @@ export default function Home() {
   );
 }
 
-function PlayerBoard({ profile, label, board, scores, accent, active, onRow, canPlace, currentValue, forecasts, recommendedRow = -1 }: { profile: Profile; label: string; board: Board; scores: number[]; accent: string; active: boolean; onRow: (index: number) => void; canPlace: (index: number) => boolean; currentValue: number; forecasts?: number[] | null; recommendedRow?: number }) {
-  return <section className={`player-side ${accent} ${active ? 'turn-active' : ''}`}><header><div className="avatar"><img src={profile.image} alt={`${profile.name} 프로필`} /></div><div><h2>{label} <span className="profile-name">{profile.name}</span></h2><p>{profile.title}</p></div>{profile.level && <em className={`level-chip level-${profile.difficulty}`}>{profile.level}</em>}<span>{active ? 'TURN' : ''}</span></header><div className="board">{board.map((row, index) => { const combo = comboMultiplier(row); const recommended = index === recommendedRow && canPlace(index); return <button key={index} className={`row ${canPlace(index) ? 'placeable' : ''} ${combo > 1 ? 'combo-row' : ''} ${recommended ? 'recommended-row' : ''}`} onClick={() => onRow(index)} disabled={!canPlace(index)} aria-label={`${index + 1}번째 줄에 놓기${forecasts ? `, 예상 승률 ${forecasts[index]}%` : ''}`}><span className="row-num">0{index + 1}</span>{recommended && <span className="recommend-badge">추천</span>}<div className="slots">{[0, 1, 2].map((slot) => row[slot] ? <DieFace key={row[slot].id} die={row[slot]} /> : <span key={slot} className="slot">{canPlace(index) && slot === row.length ? <span className="ghost-value">{currentValue}</span> : null}</span>)}</div><div className={`row-score ${forecasts ? 'with-forecast' : ''}`}>{forecasts && <span className="line-forecast"><small>예상 승률</small><b>{forecasts[index]}%</b></span>}{combo > 1 && <em className={`combo-badge combo-${combo}`}>{combo === 3 ? 'TRIPLE' : 'DOUBLE'} ×{combo}</em>}<small>SCORE</small><strong>{scores[index]}</strong></div></button>; })}</div></section>;
+function PlayerBoard({ owner, knockFx, profile, label, board, scores, accent, active, onRow, canPlace, currentValue, forecasts, recommendedRow = -1 }: { owner: Player; knockFx: KnockFx | null; profile: Profile; label: string; board: Board; scores: number[]; accent: string; active: boolean; onRow: (index: number) => void; canPlace: (index: number) => boolean; currentValue: number; forecasts?: number[] | null; recommendedRow?: number }) {
+  const dieMotion = (die: Die, rowIndex: number) => {
+    if (!knockFx || knockFx.row !== rowIndex) return '';
+    if (die.id === knockFx.attackerId) return knockFx.attacker === 'me' ? 'knock-attacker-right' : 'knock-attacker-left';
+    if (knockFx.victimIds.includes(die.id)) return owner === 'me' ? 'knock-victim-left' : 'knock-victim-right';
+    return '';
+  };
+  return <section className={`player-side ${accent} ${active ? 'turn-active' : ''} ${knockFx?.attacker === owner ? 'knock-source' : ''}`}><header><div className="avatar"><img src={profile.image} alt={`${profile.name} 프로필`} /></div><div><h2>{label} <span className="profile-name">{profile.name}</span></h2><p>{profile.title}</p></div>{profile.level && <em className={`level-chip level-${profile.difficulty}`}>{profile.level}</em>}<span>{active ? 'TURN' : ''}</span></header><div className="board">{board.map((row, index) => { const combo = comboMultiplier(row); const recommended = index === recommendedRow && canPlace(index); return <button key={index} className={`row ${canPlace(index) ? 'placeable' : ''} ${combo > 1 ? 'combo-row' : ''} ${recommended ? 'recommended-row' : ''} ${knockFx?.row === index ? 'knock-row' : ''}`} onClick={() => onRow(index)} disabled={!canPlace(index)} aria-label={`${index + 1}번째 줄에 놓기${forecasts ? `, 예상 승률 ${forecasts[index]}%` : ''}`}><span className="row-num">0{index + 1}</span>{recommended && <span className="recommend-badge">추천</span>}<div className="slots">{[0, 1, 2].map((slot) => row[slot] ? <DieFace key={row[slot].id} die={row[slot]} motion={dieMotion(row[slot], index)} /> : <span key={slot} className="slot">{canPlace(index) && slot === row.length ? <span className="ghost-value">{currentValue}</span> : null}</span>)}</div><div className={`row-score ${forecasts ? 'with-forecast' : ''}`}>{forecasts && <span className="line-forecast"><small>예상 승률</small><b>{forecasts[index]}%</b></span>}{combo > 1 && <em className={`combo-badge combo-${combo}`}>{combo === 3 ? 'TRIPLE' : 'DOUBLE'} ×{combo}</em>}<small>SCORE</small><strong>{scores[index]}</strong></div></button>; })}</div></section>;
 }
