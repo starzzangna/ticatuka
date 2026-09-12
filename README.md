@@ -1,5 +1,9 @@
 # 티카투카 (Ticatuka)
 
+## 🎲 [티카투카 플레이하기](https://starzzangna.github.io/ticatuka/)
+
+설치 없이 브라우저에서 바로 플레이할 수 있습니다. GitHub Pages로 무료 제공됩니다.
+
 ![티카투카 게임 화면](public/og.png)
 
 실드와 알까기 규칙으로 상대와 겨루는 웹 기반 전략 주사위 미니게임입니다.
@@ -77,11 +81,28 @@ npm start
 
 ## 사용 가능한 명령어
 
+### GitHub Pages 배포
+
+공개 저장소의 GitHub Pages를 사용하므로 별도 서버나 도메인 구매가 필요하지 않습니다.
+`main`에 변경사항을 올리면 GitHub Actions가 테스트와 빌드를 수행한 뒤 사이트를 자동 갱신합니다.
+README 안에서 게임을 직접 실행하는 것은 아니며, 위 플레이 링크를 누르면 게임 페이지가 열립니다.
+
+정적 배포 빌드를 로컬에서 확인하려면 아래 명령을 실행하고 표시되는 `/ticatuka/` 주소를 열어주세요.
+
+```bash
+npm run build:pages
+npm run preview:pages
+```
+
+Pages 빌드는 `dist-pages`에 생성되며, 기존 Vinext 개발 서버 및 Cloudflare 빌드와 별도로 동작합니다.
+
 | 명령어 | 설명 |
 | --- | --- |
 | `npm run dev` | 개발 서버 실행 |
 | `npm run build` | 프로덕션 빌드 생성 |
 | `npm start` | 빌드된 앱 로컬 실행 |
+| `npm run build:pages` | GitHub Pages용 정적 빌드 생성 |
+| `npm run preview:pages` | 정적 빌드 로컬 미리보기 |
 | `npm run lint` | 코드 린트 검사 |
 | `npm test` | 점수·알까기·턴·CPU·저장 데이터 테스트 |
 | `npm run typecheck` | TypeScript 검사 |

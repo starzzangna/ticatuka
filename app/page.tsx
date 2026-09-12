@@ -12,11 +12,11 @@ import type { Die, Board, Player, Phase, Difficulty } from '@/lib/game';
 type Profile = { name: string; title: string; image: string; difficulty?: Difficulty; level?: string };
 type KnockFx = { attacker: Player; attackerId: number; victimIds: number[]; row: number };
 
-const PLAYER_PROFILE: Profile = { name: '루미', title: '룬 탐험가', image: '/profiles/lumi.webp' };
+const PLAYER_PROFILE: Profile = { name: '루미', title: '룬 탐험가', image: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/profiles/lumi.webp` };
 const OPPONENTS: Record<Difficulty, Profile> = {
-  beginner: { name: '모모', title: '주사위 견습생', image: '/profiles/momo.webp', difficulty: 'beginner', level: '초보' },
-  skilled: { name: '카인', title: '주사위 사냥꾼', image: '/profiles/kain.webp', difficulty: 'skilled', level: '숙련' },
-  expert: { name: '베라', title: '룬 마스터', image: '/profiles/vera.webp', difficulty: 'expert', level: '전문가' },
+  beginner: { name: '모모', title: '주사위 견습생', image: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/profiles/momo.webp`, difficulty: 'beginner', level: '초보' },
+  skilled: { name: '카인', title: '주사위 사냥꾼', image: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/profiles/kain.webp`, difficulty: 'skilled', level: '숙련' },
+  expert: { name: '베라', title: '룬 마스터', image: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/profiles/vera.webp`, difficulty: 'expert', level: '전문가' },
 };
 
 function DieFace({ die, active = false, motion = '' }: { die: Die; active?: boolean; motion?: string }) {
