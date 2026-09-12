@@ -43,6 +43,8 @@ const inputGroupAddonVariants = cva(
   },
 );
 
+// The addon only forwards pointer focus; the input itself is keyboard-focusable.
+/* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */
 function InputGroupAddon({
   className,
   align = 'inline-start',
@@ -65,6 +67,7 @@ function InputGroupAddon({
   );
 }
 
+/* oxlint-enable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */
 const inputGroupButtonVariants = cva(
   'gap-2 text-sm flex items-center shadow-none',
   {
